@@ -14,6 +14,10 @@ const int buttonDownBPin = 9;  // Nút giảm B
 volatile int scoreA = 0;  // Biến lưu giá trị hiện tại của A
 volatile int scoreB = 0;  // Biến lưu giá trị hiện tại của B
 
+volatile bool mosconiMode = false;
+volatile bool countdownActive = false;
+unsigned long countdownStartTime = 0;
+
 unsigned long lastDebounceTimeAUp = 0;
 unsigned long lastDebounceTimeADown = 0;
 unsigned long lastDebounceTimeBUp = 0;
@@ -23,6 +27,8 @@ const unsigned long debounceDelay = 300;  // Thời gian chống dội nút (ms)
 unsigned long pressStartTime = 0;
 bool resetInProgress = false;
 unsigned long lastReleaseTime = 0;  // Thời gian nhả nút cuối cùng
+
+int countdownTime = 30;  // Đếm ngược từ 30 giây
 
 // Bảng mã bit cho các số từ 0-9 trên LED 7 đoạn
 byte digits[] = {
@@ -38,7 +44,25 @@ byte digits[] = {
   0b01101111  // 9
 };
 
-// Hàm hiển thị số lên LED 7 đoạn
+// Hàm hiển thị 4 số lên LED 7 đoạn
+void displayNumber(int scoreA, int scoreB) {
+  int tensA = scoreA / 10;  // Chữ số hàng chục của A
+  int onesA = scoreA % 10;  // Chữ số hàng đơn vị của A
+  int tensB = scoreB / 10;  // Chữ số hàng chục của B
+  int onesB = scoreB % 10;  // Chữ số hàng đơn vị của B
+
+  digitalWrite(latchPin, LOW);  // Hạ chân chốt để chuẩn bị gửi dữ liệu
+
+  // Gửi dữ liệu cho LED 7 đoạn tương ứng với các chữ số
+  shiftOut(dataPin, clockPin, MSBFIRST, digits[tensA]);
+  shiftOut(dataPin, clockPin, MSBFIRST, digits[onesA]);
+  shiftOut(dataPin, clockPin, MSBFIRST, digits[tensB]);
+  shiftOut(dataPin, clockPin, MSBFIRST, digits[onesB]);
+
+  digitalWrite(latchPin, HIGH); // Nâng chân chốt để hiển thị dữ liệu
+}
+
+
 void displayScore(int scoreA, int scoreB) {
   int tensA = scoreA / 10;  // Chữ số hàng chục bên A
   int onesA = scoreA % 10;  // Chữ số hàng đơn vị bên A
@@ -56,16 +80,48 @@ void displayScore(int scoreA, int scoreB) {
   digitalWrite(latchPin, HIGH); // Nâng chân chốt để hiển thị dữ liệu
 }
 
-// Hàm lưu giá trị vào EEPROM (sử dụng EEPROM.put)
-void saveScoresToEEPROM() {
-  EEPROM.put(0, scoreA);  // Lưu giá trị của A vào EEPROM tại địa chỉ 0
-  EEPROM.put(sizeof(scoreA), scoreB);  // Lưu giá trị của B vào EEPROM tại địa chỉ tiếp theo
+// Hàm tắt hẳn tất cả LED
+void turnOffAllLEDs() {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, 0x00);  // Tắt LED 7 đoạn
+  shiftOut(dataPin, clockPin, MSBFIRST, 0x00);  // Tắt LED 7 đoạn
+  shiftOut(dataPin, clockPin, MSBFIRST, 0x00);  // Tắt LED 7 đoạn
+  shiftOut(dataPin, clockPin, MSBFIRST, 0x00);  // Tắt LED 7 đoạn
+  digitalWrite(latchPin, HIGH);  // Nâng chân chốt để hoàn thành
 }
 
-// Hàm đọc giá trị từ EEPROM (sử dụng EEPROM.get)
+// Hàm lưu giá trị vào EEPROM (sử dụng EEPROM.put)
+void saveScoresToEEPROM() {
+  int eepromScoreA, eepromScoreB;
+  EEPROM.get(0, eepromScoreA);
+  EEPROM.get(sizeof(scoreA), eepromScoreB);
+  
+  // Chỉ ghi lại nếu giá trị thay đổi
+  if (eepromScoreA != scoreA) {
+    EEPROM.put(0, scoreA);
+  }
+  if (eepromScoreB != scoreB) {
+    EEPROM.put(sizeof(scoreA), scoreB);
+  }
+}
+
 void loadScoresFromEEPROM() {
-  EEPROM.get(0, scoreA);  // Đọc giá trị của A từ EEPROM
-  EEPROM.get(sizeof(scoreA), scoreB);  // Đọc giá trị của B từ EEPROM
+  EEPROM.get(0, scoreA);
+  EEPROM.get(sizeof(scoreA), scoreB);
+  
+  // Kiểm tra nếu giá trị ngoài phạm vi hợp lệ (ví dụ EEPROM chưa được ghi lần đầu)
+  if (scoreA < 0 || scoreA > 99) scoreA = 0;
+  if (scoreB < 0 || scoreB > 99) scoreB = 0;
+}
+
+// Nhấp nháy tất cả LED
+void blinkAllLEDs(int times) {
+  for (int i = 0; i < times; i++) {
+    displayNumber(88,88);  // Tất cả các LED bật
+    delay(200);
+    turnOffAllLEDs();        // Tắt tất cả các LED hoàn toàn
+    delay(200);
+  }
 }
 
 // ISR cho nút tăng A
@@ -82,35 +138,108 @@ void increaseScoreA() {
 // ISR cho nút giảm A
 void decreaseScoreA() {
   if (millis() - lastDebounceTimeADown > debounceDelay) {
-    scoreA--;
-    if (scoreA < 0) scoreA = 0;
-    displayScore(scoreA, scoreB);
-    lastDebounceTimeADown = millis();
-    saveScoresToEEPROM();
+    if (mosconiMode) {
+      countdownActive = !countdownActive;  // Kết thúc đếm ngược
+    } else {
+      scoreA--;
+      if (scoreA < 0) scoreA = 0;
+      displayScore(scoreA, scoreB);
+      lastDebounceTimeADown = millis();
+      saveScoresToEEPROM();
+    }
   }
 }
 
 // ISR cho nút tăng B
 void increaseScoreB() {
   if (millis() - lastDebounceTimeBUp > debounceDelay) {
-    scoreB++;
-    if (scoreB > 99) scoreB = 99;
-    displayScore(scoreA, scoreB);
-    lastDebounceTimeBUp = millis();
-    saveScoresToEEPROM();
+    // Kiểm tra xem có đang ở chế độ Mosconi hay không
+    if (mosconiMode) {
+      // Bắt đầu đếm ngược nếu đang ở chế độ Mosconi
+      countdownTime = 30;  // Đặt lại thời gian đếm ngược về 30 giây
+      countdownActive = true;
+      countdownStartTime = millis();  // Ghi lại thời gian bắt đầu đếm ngược
+      //mosconiMode = false;  // Tắt chế độ Mosconi sau khi bắt đầu đếm ngược
+      displayNumber(0, countdownTime);  // Hiển thị thời gian đếm ngược
+    } else {
+      // Nếu không ở chế độ Mosconi, tăng điểm số
+      scoreB++;
+      if (scoreB > 99) scoreB = 99;
+      displayScore(scoreA, scoreB);
+      saveScoresToEEPROM();
+    }
+    lastDebounceTimeBUp = millis();  // Cập nhật thời gian cuối cùng nhấn nút
   }
 }
 
+
 // ISR cho nút giảm B
 void decreaseScoreB() {
-  if (millis() - lastDebounceTimeBDown > debounceDelay) {
-    scoreB--;
-    if (scoreB < 0) scoreB = 0;
-    displayScore(scoreA, scoreB);
-    lastDebounceTimeBDown = millis();
-    saveScoresToEEPROM();
+  if (millis() - lastDebounceTimeBUp > debounceDelay) {
+    if (mosconiMode) {
+      // Bắt đầu đếm ngược nếu đang ở chế độ Mosconi
+        countdownTime = 45;  // Đặt lại thời gian đếm ngược về 30 giây
+        countdownActive = true;
+        countdownStartTime = millis();  // Ghi lại thời gian bắt đầu đếm ngược
+        //mosconiMode = false;  // Tắt chế độ Mosconi sau khi bắt đầu đếm ngược
+        displayNumber(0, countdownTime);  // Hiển thị thời gian đếm ngược
+    }
+    else if(millis() - lastDebounceTimeBDown > debounceDelay) {
+      scoreB--;
+      if (scoreB < 0) scoreB = 0;
+      displayScore(scoreA, scoreB);
+      lastDebounceTimeBDown = millis();
+      saveScoresToEEPROM();
+    }
+  lastDebounceTimeBUp = millis();  // Cập nhật thời gian cuối cùng nhấn nút
   }
 }
+
+// Hàm kiểm tra Mosconi mode
+void checkMosconiMode() {
+  if (digitalRead(buttonUpBPin) == LOW && digitalRead(buttonDownBPin) == LOW) {
+    blinkAllLEDs(3);  // Nhấp nháy LED 3 lần
+    mosconiMode = !mosconiMode;  // Đảo ngược chế độ Mosconi
+    countdownActive = false;  // Tắt đếm ngược khi thoát Mosconi mode
+    if (!mosconiMode) {
+      turnOffAllLEDs();  // Tắt LED khi thoát Mosconi mode
+    }
+  }
+}
+
+// Kiểm tra nút B+ để bắt đầu đếm ngược
+void startCountdown() {
+  if (mosconiMode && digitalRead(buttonUpBPin) == LOW && millis() - lastDebounceTimeBUp > debounceDelay) {
+    countdownStartTime = millis();
+    countdownActive = true;  // Bắt đầu đếm ngược
+    lastDebounceTimeBUp = millis();  // Cập nhật thời gian nhấn
+  }
+}
+
+// Kiểm tra nút B- để tăng mức đếm
+void increaseCountdownTime() {
+  if (mosconiMode && digitalRead(buttonDownBPin) == LOW && millis() - lastDebounceTimeBDown > debounceDelay) {
+    lastDebounceTimeBDown = millis();  // Cập nhật thời gian nhấn
+  }
+}
+
+// Hàm xử lý đếm ngược
+void handleCountdown() {
+  if (countdownActive) {
+    int elapsed = (millis() - countdownStartTime) / 1000;
+    int remainingTime = countdownTime - elapsed;
+
+    if (remainingTime >= 0) {
+      displayNumber(0, remainingTime);  // Hiển thị thời gian còn lại
+    } else {
+      countdownActive = false;  // Kết thúc đếm ngược
+      displayNumber(0, 0);  // Tắt LED khi hết thời gian
+      mosconiMode = false;  // Tắt chế độ Mosconi sau khi bắt đầu đếm ngược
+      displayScore(scoreA, scoreB);
+    }
+  }
+}
+
 
 // Kiểm tra nút A- có được giữ trong 5 giây không
 void checkResetButton() {
@@ -160,4 +289,13 @@ void loop() {
   checkResetButton();
 
   // Các phần xử lý khác (nếu có)
+  checkMosconiMode();
+  // Nếu ở chế độ Mosconi, nhấn B+ để bắt đầu đếm lại từ đầu và B- để tăng mức đếm
+  //if (mosconiMode) {
+  //  startCountdown();
+  //  increaseCountdownTime();
+  //}
+
+  // Xử lý đếm ngược
+  handleCountdown();
 }
