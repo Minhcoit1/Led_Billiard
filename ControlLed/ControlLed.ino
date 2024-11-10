@@ -22,6 +22,7 @@ const unsigned long debounceDelay = 300;  // Thời gian chống dội nút (ms)
 
 unsigned long pressStartTime = 0;
 bool resetInProgress = false;
+unsigned long lastReleaseTime = 0;  // Thời gian nhả nút cuối cùng
 
 // Bảng mã bit cho các số từ 0-9 trên LED 7 đoạn
 byte digits[] = {
@@ -71,7 +72,7 @@ void loadScoresFromEEPROM() {
 void increaseScoreA() {
   if (millis() - lastDebounceTimeAUp > debounceDelay) {
     scoreA++;
-    if (scoreA > 99) scoreA = 0;
+    if (scoreA > 99) scoreA = 99;
     displayScore(scoreA, scoreB);
     lastDebounceTimeAUp = millis();
     saveScoresToEEPROM();  // Lưu giá trị sau mỗi lần thay đổi
@@ -82,7 +83,7 @@ void increaseScoreA() {
 void decreaseScoreA() {
   if (millis() - lastDebounceTimeADown > debounceDelay) {
     scoreA--;
-    if (scoreA < 0) scoreA = 99;
+    if (scoreA < 0) scoreA = 0;
     displayScore(scoreA, scoreB);
     lastDebounceTimeADown = millis();
     saveScoresToEEPROM();
@@ -93,7 +94,7 @@ void decreaseScoreA() {
 void increaseScoreB() {
   if (millis() - lastDebounceTimeBUp > debounceDelay) {
     scoreB++;
-    if (scoreB > 99) scoreB = 0;
+    if (scoreB > 99) scoreB = 99;
     displayScore(scoreA, scoreB);
     lastDebounceTimeBUp = millis();
     saveScoresToEEPROM();
@@ -104,10 +105,33 @@ void increaseScoreB() {
 void decreaseScoreB() {
   if (millis() - lastDebounceTimeBDown > debounceDelay) {
     scoreB--;
-    if (scoreB < 0) scoreB = 99;
+    if (scoreB < 0) scoreB = 0;
     displayScore(scoreA, scoreB);
     lastDebounceTimeBDown = millis();
     saveScoresToEEPROM();
+  }
+}
+
+// Kiểm tra nút A- có được giữ trong 5 giây không
+void checkResetButton() {
+  if (digitalRead(buttonDownAPin) == LOW && !resetInProgress) {
+    if (pressStartTime == 0) {
+      pressStartTime = millis();
+    } else if (millis() - pressStartTime > 5000) {
+      // Nếu giữ nút trong 5 giây, reset điểm
+      scoreA = 0;
+      scoreB = 0;
+      displayScore(scoreA, scoreB);
+      saveScoresToEEPROM();
+      resetInProgress = true;
+    }
+  } else if (digitalRead(buttonDownAPin) == HIGH) {
+    // Đảm bảo khi nhả nút sẽ không xảy ra hành động giảm điểm số thêm 1
+    if (millis() - lastReleaseTime > debounceDelay) {
+      pressStartTime = 0;  // Đặt lại thời gian bắt đầu
+      resetInProgress = false;
+      lastReleaseTime = millis();  // Cập nhật thời gian nhả nút
+    }
   }
 }
 
@@ -132,19 +156,8 @@ void setup() {
 }
 
 void loop() {
-  // Kiểm tra xem nút A- có được giữ trong 5 giây không
-  if (digitalRead(buttonDownAPin) == LOW && !resetInProgress) {
-    if (pressStartTime == 0) {
-      pressStartTime = millis();
-    } else if (millis() - pressStartTime > 5000) {
-      scoreA = 0;
-      scoreB = 0;
-      displayScore(scoreA, scoreB);
-      saveScoresToEEPROM();
-      resetInProgress = true;
-    }
-  } else if (digitalRead(buttonDownAPin) == HIGH) {
-    pressStartTime = 0;
-    resetInProgress = false;
-  }
+  // Kiểm tra trạng thái nút A- để thực hiện reset
+  checkResetButton();
+
+  // Các phần xử lý khác (nếu có)
 }
