@@ -9,6 +9,10 @@ const int buttonUpAPin = 6;    // Nút tăng A
 const int buttonDownAPin = 7;  // Nút giảm A
 const int buttonUpBPin = 8;    // Nút tăng B
 const int buttonDownBPin = 9;  // Nút giảm B
+const int buzzerPin = 16;  // Chân GPIO điều khiển còi bíp
+volatile bool buzzerActive = false;  // Cờ báo còi đang kêu
+volatile unsigned long buzzerStartTime = 0;  // Thời điểm bắt đầu kêu
+const unsigned long buzzerDuration = 50;    // Thời gian kêu (ms)
 
 // Giá trị lưu trữ số của hai bên A và B
 volatile int scoreA = 0;  // Biến lưu giá trị hiện tại của A
@@ -43,6 +47,13 @@ byte digits[] = {
   0b01111111, // 8
   0b01101111  // 9
 };
+
+void beepBuzzer(int duration) {
+  digitalWrite(buzzerPin, LOW);  // Bật còi bíp
+  delay(duration);                // Giữ còi trong thời gian duration (ms)
+  digitalWrite(buzzerPin, HIGH);   // Tắt còi bíp
+}
+
 
 // Hàm hiển thị 4 số lên LED 7 đoạn
 void displayNumber(int scoreA, int scoreB) {
@@ -127,17 +138,22 @@ void blinkAllLEDs(int times) {
 // ISR cho nút tăng A
 void increaseScoreA() {
   if (millis() - lastDebounceTimeAUp > debounceDelay) {
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
     scoreA++;
     if (scoreA > 99) scoreA = 99;
     displayScore(scoreA, scoreB);
     lastDebounceTimeAUp = millis();
     saveScoresToEEPROM();  // Lưu giá trị sau mỗi lần thay đổi
+    
   }
 }
 
 // ISR cho nút giảm A
 void decreaseScoreA() {
   if (millis() - lastDebounceTimeADown > debounceDelay) {
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
     if (mosconiMode) {
       countdownActive = !countdownActive;  // Kết thúc đếm ngược
     } else {
@@ -146,6 +162,7 @@ void decreaseScoreA() {
       displayScore(scoreA, scoreB);
       lastDebounceTimeADown = millis();
       saveScoresToEEPROM();
+      
     }
   }
 }
@@ -153,6 +170,8 @@ void decreaseScoreA() {
 // ISR cho nút tăng B
 void increaseScoreB() {
   if (millis() - lastDebounceTimeBUp > debounceDelay) {
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
     // Kiểm tra xem có đang ở chế độ Mosconi hay không
     if (mosconiMode) {
       // Bắt đầu đếm ngược nếu đang ở chế độ Mosconi
@@ -168,6 +187,7 @@ void increaseScoreB() {
       displayScore(scoreA, scoreB);
       saveScoresToEEPROM();
     }
+    
     lastDebounceTimeBUp = millis();  // Cập nhật thời gian cuối cùng nhấn nút
   }
 }
@@ -176,6 +196,8 @@ void increaseScoreB() {
 // ISR cho nút giảm B
 void decreaseScoreB() {
   if (millis() - lastDebounceTimeBUp > debounceDelay) {
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
     if (mosconiMode) {
       // Bắt đầu đếm ngược nếu đang ở chế độ Mosconi
         countdownTime = 45;  // Đặt lại thời gian đếm ngược về 30 giây
@@ -191,7 +213,8 @@ void decreaseScoreB() {
       lastDebounceTimeBDown = millis();
       saveScoresToEEPROM();
     }
-  lastDebounceTimeBUp = millis();  // Cập nhật thời gian cuối cùng nhấn nút
+    
+    lastDebounceTimeBUp = millis();  // Cập nhật thời gian cuối cùng nhấn nút
   }
 }
 
@@ -213,6 +236,8 @@ void startCountdown() {
     countdownStartTime = millis();
     countdownActive = true;  // Bắt đầu đếm ngược
     lastDebounceTimeBUp = millis();  // Cập nhật thời gian nhấn
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
   }
 }
 
@@ -220,6 +245,8 @@ void startCountdown() {
 void increaseCountdownTime() {
   if (mosconiMode && digitalRead(buttonDownBPin) == LOW && millis() - lastDebounceTimeBDown > debounceDelay) {
     lastDebounceTimeBDown = millis();  // Cập nhật thời gian nhấn
+    buzzerActive = true;  // Kích hoạt còi
+    buzzerStartTime = millis();  // Lưu thời gian bắt đầu
   }
 }
 
@@ -253,6 +280,8 @@ void checkResetButton() {
       displayScore(scoreA, scoreB);
       saveScoresToEEPROM();
       resetInProgress = true;
+      buzzerActive = true;  // Kích hoạt còi
+      buzzerStartTime = millis();  // Lưu thời gian bắt đầu
     }
   } else if (digitalRead(buttonDownAPin) == HIGH) {
     // Đảm bảo khi nhả nút sẽ không xảy ra hành động giảm điểm số thêm 1
@@ -264,6 +293,20 @@ void checkResetButton() {
   }
 }
 
+void buzzerTask(void *pvParameters) {
+  while (1) {
+    if (buzzerActive) {
+      digitalWrite(buzzerPin, HIGH);  // Bật còi
+      if (millis() - buzzerStartTime > buzzerDuration) {
+        digitalWrite(buzzerPin, LOW);  // Tắt còi sau thời gian định trước
+        buzzerActive = false;  // Đặt lại trạng thái còi
+      }
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS);  // Giảm tải CPU
+  }
+}
+
+
 void setup() {
   pinMode(latchPin, OUTPUT);
   pinMode(clockPin, OUTPUT);
@@ -273,6 +316,8 @@ void setup() {
   pinMode(buttonDownAPin, INPUT_PULLUP);
   pinMode(buttonUpBPin, INPUT_PULLUP);
   pinMode(buttonDownBPin, INPUT_PULLUP);
+  pinMode(buzzerPin, OUTPUT);  // Thiết lập chân còi bíp là OUTPUT
+  digitalWrite(buzzerPin, LOW);  // Tắt còi bíp ban đầu
 
   loadScoresFromEEPROM();  // Đọc giá trị từ EEPROM khi khởi động
   displayScore(scoreA, scoreB);  // Hiển thị giá trị ban đầu
@@ -282,6 +327,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(buttonDownAPin), decreaseScoreA, FALLING);
   attachInterrupt(digitalPinToInterrupt(buttonUpBPin), increaseScoreB, FALLING);
   attachInterrupt(digitalPinToInterrupt(buttonDownBPin), decreaseScoreB, FALLING);
+
+  xTaskCreate(buzzerTask, "Buzzer Task", 1024, NULL, 1, NULL);
+
 }
 
 void loop() {
