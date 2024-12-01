@@ -1,5 +1,7 @@
 #include <EEPROM.h>
 
+#define EEPROM_SIZE 16      
+
 const int latchPin = 21;  // Pin connected to ST_CP of 74HC595
 const int clockPin = 18;  // Pin connected to SH_CP of 74HC595
 const int dataPin = 3;    // Pin connected to DS of 74HC595
@@ -104,21 +106,23 @@ void turnOffAllLEDs() {
 // Hàm lưu giá trị vào EEPROM (sử dụng EEPROM.put)
 void saveScoresToEEPROM() {
   int eepromScoreA, eepromScoreB;
-  EEPROM.get(0, eepromScoreA);
-  EEPROM.get(sizeof(scoreA), eepromScoreB);
+  eepromScoreA = EEPROM.read(0);
+  eepromScoreB = EEPROM.read(sizeof(scoreA));
   
   // Chỉ ghi lại nếu giá trị thay đổi
   if (eepromScoreA != scoreA) {
-    EEPROM.put(0, scoreA);
+    EEPROM.write(0, scoreA);
+    EEPROM.commit(); // Ghi dữ liệu vào flash
   }
   if (eepromScoreB != scoreB) {
-    EEPROM.put(sizeof(scoreA), scoreB);
+    EEPROM.write(sizeof(scoreA), scoreB);
+    EEPROM.commit(); // Ghi dữ liệu vào flash
   }
 }
 
 void loadScoresFromEEPROM() {
-  EEPROM.get(0, scoreA);
-  EEPROM.get(sizeof(scoreA), scoreB);
+  scoreA = EEPROM.read(0);
+  scoreB = EEPROM.read(sizeof(scoreA));
   
   // Kiểm tra nếu giá trị ngoài phạm vi hợp lệ (ví dụ EEPROM chưa được ghi lần đầu)
   if (scoreA < 0 || scoreA > 99) scoreA = 0;
@@ -268,12 +272,12 @@ void handleCountdown() {
 }
 
 
-// Kiểm tra nút A- có được giữ trong 5 giây không
+// Kiểm tra nút A- có được giữ trong 1 giây không
 void checkResetButton() {
   if (digitalRead(buttonDownAPin) == LOW && !resetInProgress) {
     if (pressStartTime == 0) {
       pressStartTime = millis();
-    } else if (millis() - pressStartTime > 5000) {
+    } else if (millis() - pressStartTime > 1000) {
       // Nếu giữ nút trong 5 giây, reset điểm
       scoreA = 0;
       scoreB = 0;
@@ -317,8 +321,14 @@ void setup() {
   pinMode(buttonUpBPin, INPUT_PULLUP);
   pinMode(buttonDownBPin, INPUT_PULLUP);
   pinMode(buzzerPin, OUTPUT);  // Thiết lập chân còi bíp là OUTPUT
-  digitalWrite(buzzerPin, LOW);  // Tắt còi bíp ban đầu
 
+  // Khởi tạo EEPROM
+  if (!EEPROM.begin(EEPROM_SIZE)) {
+    Serial.println("Failed to initialize EEPROM");
+    while (true);
+  }
+
+  digitalWrite(buzzerPin, LOW);  // Tắt còi bíp ban đầu
   loadScoresFromEEPROM();  // Đọc giá trị từ EEPROM khi khởi động
   displayScore(scoreA, scoreB);  // Hiển thị giá trị ban đầu
 
